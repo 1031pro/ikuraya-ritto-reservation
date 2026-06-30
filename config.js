@@ -1,5 +1,5 @@
 window.RESERVATION_CONFIG = {
-  GAS_WEBAPP_URL: 'https://script.google.com/macros/s/AKfycbz3QyVVry1chcxsvQs4hpzEA7dnseobnCp5_tC-P05NkhZtEUKLiCg1mcClWyx2aAuD/exec',
+  GAS_WEBAPP_URL: 'https://script.google.com/macros/s/AKfycby8ALdtvAW4KN9Q0wXLe8tUk2Re-BwZfxEK76PWSwXJsrynmjO4Vy6J-L5BLHhr4Gq5/exec',
   LIFF_ID: '',
 
   STORE_NAME: 'いくら栗東駅前店',
