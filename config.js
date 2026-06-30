@@ -1,6 +1,6 @@
 window.RESERVATION_CONFIG = {
-  GAS_WEBAPP_URL: 'https://script.google.com/macros/s/AKfycby8ALdtvAW4KN9Q0wXLe8tUk2Re-BwZfxEK76PWSwXJsrynmjO4Vy6J-L5BLHhr4Gq5/exec',
-  LIFF_ID: '',
+  GAS_WEBAPP_URL: 'https://script.google.com/macros/s/AKfycbxoxmJ3eNJ9YOEYon4GyzXM_I-qHnA3aZSdkY8PDGJ0f5mJcntp--D41ONx19eJJfHo/exec',
+  LIFF_ID: '2010551325-kaP6pfUR',
 
   STORE_NAME: 'いくら栗東駅前店',
   HEADER_SUBTITLE: '予約受付',
