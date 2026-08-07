@@ -6,6 +6,7 @@
   var availabilityNotice = document.getElementById('availabilityNotice');
   var weekRange = document.getElementById('weekRange');
   var prevWeekButton = document.getElementById('prevWeekButton');
+  var weekLoading = document.getElementById('weekLoading');
   var reservationForm = document.getElementById('reservationForm');
   var submitLoading = document.getElementById('submitLoading');
   var selectedDateTime = document.getElementById('selectedDateTime');
@@ -36,16 +37,20 @@
   var state = {
     weekOffset: 0,
     availability: null,
+    availabilitySnapshot: null,
     selectedMenu: null,
     selectedSlot: null,
     toastTimer: null,
     userId: ''
   };
 
+  var snapshotLoader = window.AvailabilitySnapshotClient.createLoader(fetchAvailabilitySnapshot);
+
   document.addEventListener('DOMContentLoaded', function () {
     applyConfigText();
     setupMenuSelection();
     setupLiff();
+    preloadAvailabilitySnapshot();
   });
 
   function hasApiUrl() {
@@ -153,7 +158,7 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function callApi(params, callback) {
+  function callApi(params, callback, options) {
     if (!hasApiUrl()) {
       window.setTimeout(function () {
         callback(null, mockApi(params));
@@ -161,25 +166,12 @@
       return;
     }
 
-    var callbackName = 'reservationCb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
-    var script = document.createElement('script');
-    window[callbackName] = function (data) {
-      delete window[callbackName];
-      if (script.parentNode) script.parentNode.removeChild(script);
-      callback(null, data);
-    };
-
-    var url = config.GAS_WEBAPP_URL + '?callback=' + encodeURIComponent(callbackName);
-    Object.keys(params).forEach(function (key) {
-      url += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(params[key]);
-    });
-
-    script.src = url;
-    script.onerror = function () {
-      delete window[callbackName];
-      callback(new Error('通信エラー'));
-    };
-    document.body.appendChild(script);
+    window.ReservationApiClient.request(
+      config.GAS_WEBAPP_URL,
+      params,
+      callback,
+      options
+    );
   }
 
   function startAvailabilityLoad() {
@@ -189,34 +181,93 @@
     }
     showScreen('loading');
     state.weekOffset = 0;
-    loadWeek(0, function () {
-      showScreen('slots');
+    snapshotLoader.load(function (err, snapshot) {
+      if (!err && snapshot) {
+        state.availabilitySnapshot = snapshot;
+        loadWeek(0, function (success) {
+          showScreen(success ? 'slots' : 'home');
+        });
+        return;
+      }
+      loadWeekFromApi(0, function (success) {
+        showScreen(success ? 'slots' : 'home');
+      });
     });
   }
 
   function loadWeek(offset, done) {
+    if (state.availabilitySnapshot) {
+      var snapshotWeek = window.AvailabilitySnapshotClient.buildWeek(
+        state.availabilitySnapshot,
+        offset,
+        state.selectedMenu ? state.selectedMenu.id : ''
+      );
+      if (snapshotWeek) {
+        applyWeek(offset, snapshotWeek);
+        if (done) done(true);
+        return;
+      }
+    }
+    loadWeekFromApi(offset, done);
+  }
+
+  function loadWeekFromApi(offset, done) {
+    setWeekLoading(true);
     setWeekButtonsDisabled(true);
     callApi({
       action: 'weekAvailability',
       week_offset: offset,
       menu_id: state.selectedMenu ? state.selectedMenu.id : ''
     }, function (err, data) {
+      setWeekLoading(false);
       setWeekButtonsDisabled(false);
       if (err || !data || data.error) {
-        showToast(data && data.error ? data.error : '空き時間の取得に失敗しました');
-        if (done) done();
+        showToast(data && data.error ? data.error : '空き時間の取得に時間がかかっています。もう一度お試しください。');
+        if (done) done(false);
         return;
       }
-      state.weekOffset = offset;
-      state.availability = data;
-      renderAvailability(data);
-      if (done) done();
+      applyWeek(offset, data);
+      if (done) done(true);
+    }, {
+      timeoutMs: 15000,
+      maxAttempts: 2,
+      retryDelayMs: 500,
+      retryOnErrorResponse: true
     });
+  }
+
+  function preloadAvailabilitySnapshot() {
+    snapshotLoader.load(function (err, snapshot) {
+      if (!err && snapshot) state.availabilitySnapshot = snapshot;
+    });
+  }
+
+  function fetchAvailabilitySnapshot(callback) {
+    callApi({ action: 'availabilitySnapshot' }, callback, {
+      timeoutMs: 15000,
+      maxAttempts: 2,
+      retryDelayMs: 500,
+      retryOnErrorResponse: true
+    });
+  }
+
+  function applyWeek(offset, data) {
+    state.weekOffset = offset;
+    state.availability = data;
+    renderAvailability(data);
+    setWeekButtonsDisabled(false);
+  }
+
+  function setWeekLoading(loading) {
+    if (!weekLoading) return;
+    weekLoading.hidden = !loading;
+    weekLoading.setAttribute('aria-busy', loading ? 'true' : 'false');
   }
 
   function setWeekButtonsDisabled(disabled) {
     prevWeekButton.disabled = disabled || state.weekOffset === 0;
-    document.getElementById('nextWeekButton').disabled = disabled;
+    document.getElementById('nextWeekButton').disabled =
+      disabled || !!(state.availability && state.availability.canNext === false);
   }
 
   function switchWeek(direction) {
@@ -321,6 +372,8 @@
         showToast(data && data.message ? data.message : '予約処理に失敗しました');
         return;
       }
+      snapshotLoader.clear();
+      state.availabilitySnapshot = null;
       showComplete(data, params);
     });
   }
@@ -393,6 +446,9 @@
   reservationForm.addEventListener('submit', submitForm);
 
   function mockApi(params) {
+    if (params.action === 'availabilitySnapshot') {
+      return buildMockAvailabilitySnapshot();
+    }
     if (params.action === 'weekAvailability') {
       return buildMockAvailability(parseInt(params.week_offset || '0', 10));
     }
@@ -441,10 +497,47 @@
     return {
       success: true,
       weekOffset: offset,
+      canNext: offset < 26,
       startLabel: dates[0].label,
       endLabel: dates[6].label,
       dates: dates,
       rows: rows
+    };
+  }
+
+  function buildMockAvailabilitySnapshot() {
+    var menus = (config.MENUS || []).map(function (menu, index) {
+      return {
+        id: menu.id,
+        durationMinutes: menu.durationMinutes,
+        bit: Math.pow(2, index)
+      };
+    });
+    var allMenuMask = Math.pow(2, menus.length) - 1;
+    var weeks = [];
+    for (var offset = 0; offset <= 26; offset++) {
+      weeks.push(buildMockAvailability(offset));
+    }
+
+    return {
+      success: true,
+      snapshotVersion: 1,
+      generatedAt: new Date().toISOString(),
+      maxWeekOffset: 26,
+      menus: menus,
+      dates: weeks.reduce(function (result, week) {
+        return result.concat(week.dates);
+      }, []),
+      rows: mockSlotTimes.map(function (time, rowIndex) {
+        return {
+          time: time,
+          masks: weeks.reduce(function (result, week) {
+            return result.concat(week.rows[rowIndex].cells.map(function (cell) {
+              return cell.available ? allMenuMask : 0;
+            }));
+          }, [])
+        };
+      })
     };
   }
 
